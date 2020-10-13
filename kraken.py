@@ -50,12 +50,14 @@
 # the global counter.
 #
 # Possible misunderstandings from my side:
-#   - price update only when , which I guess should happen less and less frequently ?
-#   - i was not sure which timestamp to use in the output or whether I should generate one.
-#     therefore I just set it to None.
-#   - i assumed that the concept of asset, which I assume is a coin,market pair 
+#   - price update only issued when new ask/bid were lower/higher than the 
+#     lowest/highest ask/bid in the top ten 10. I'm not sure this makes sense
+#     since then updates will become less and less frequent?
+#   - i was not sure which timestamp to use in the output or whether I should 
+#     generate one. therefore I just set it to None.
+#   - i assumed that the concept of asset, which I believe is a (coin/market) pair 
 #     (e.g. 'ETH/JPY') is a relevant concept to hold on to. that is why i created
-#     a Asset() class.
+#     an Asset() class.
 ###
 import asyncio
 import websockets as ws
