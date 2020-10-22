@@ -31,8 +31,8 @@
 # in the exchange class. All messages read from the exchange are pushed to the
 # internal queue. Another coroutine is tasked to filter messages from the 
 # internal queue and only act on the relevant ones. In principle this should 
-# allow offloading the message processing part to other cores, and/or add multiple 
-# coroutines to process the incoming messages.
+# allow offloading the message processing part to other cores, and/or add 
+# multiple coroutines to process the incoming messages.
 #
 # I did not put significant amount of effort in handling and mitigating
 # possible errors and exceptions. I did not put effort in additional
@@ -47,7 +47,7 @@
 # The first step would be to create a general Exchange() class, of which,
 # each specific exchange would customize to their specific API.
 # Afterwards, a pool of exchanges would be ready to push price updates to
-# the global counter.
+# the global queue.
 #
 # Possible misunderstandings from my side:
 #   - price update only issued when new ask/bid were lower/higher than the 
@@ -226,7 +226,7 @@ class Asset(object):
 
         self.last_ask = None
         self.last_bid = None
-        # not being used 
+        # timestamp, not being used 
         self.ts = None
 
         self.uq = uq
@@ -242,8 +242,8 @@ class Asset(object):
         this function adds na and nb to the list of asks/bids if they are 
         smaller/larger than the existing items in the list, respectively
 
-        if na is lower than all items in self.last_ask or
-        nb is higher than self.last_bid then an updated is pushed to the
+        if na is lower than all items in self.lask or
+        nb is higher than self.lbid then an updated is pushed to the
         update queue self.uq in the form of a list,
         [xch,           # exchange name
         self.coin,      # coin name
@@ -261,27 +261,37 @@ class Asset(object):
         if na is not None:
             # na and nb sometimes are [a,b,c] and sometimes [[a,b,c],[d,e,f],...]
             # if [a,b,c], then convert to [[a,b,c]]
-            # same below for ba
+            # same below for nb
             if not isinstance(na[0],list):
                 na = [na]
             # convert to float, only keep price and volume
             na = [[float(x) for x in y[0:2]] for y in na]
 
-            # loop new asks and add to the list of last_asks if 
-            # lower than the last one
-            for iask in na:
-                self.last_ask = iask
+            # save current top ask, if it changes an update is triggered
+            old_top_ask = self.lask[0]
 
-                if iask[0] < self.lask[-1][0]:
-                    # only publish if the best ask, i.e. lower that 
-                    # current best
-                    if iask[0] < self.lask[0][0]:
-                        publish = True
+            # store last ask price
+            self.last_ask = na[-1][0]
+
+            # append and filter out zero volume 
+            tmp = self.lask +list(filter(lambda x: x[1]>0, na))
+            # sort list ascending
+            tmp.sort()
+            # get a unique list of prices
+            pset = set([x[0] for x in tmp])
+            # and remove duplicate prices from tmp
+            self.lask = []
+            for x in tmp:
+                if x[0] in pset:
+                    self.lask.append(x)
+                    pset.remove(x[0])
+            # keep at most n
+            self.lask=self.lask[0:self.n]
+
+            # if the top ask changed, publish update
+            if self.lask[0] != old_top_ask:
+                publish = True
                     
-                    # append and sort list ascending
-                    tmp = self.lask+[iask]
-                    self.lask = sorted(tmp, key=lambda x: x[0])[0:self.n]
-
         if nb is not None:
             if not isinstance(nb[0],list):
                 nb = [nb]
@@ -289,20 +299,30 @@ class Asset(object):
             # convert to float, keep only price and volume
             nb = [[float(x) for x in y[0:2]] for y in nb]
 
-            # loop new bids and add to the list of last_bids if 
-            # larger than the last one
-            for ibid in nb:
-                if ibid[0] > self.lbid[-1][0]:
-                    self.last_bid = nb
+            # save current top bid , if it changes an update is triggered
+            old_top_bid = self.lbid[0]
 
-                    # publish only if the best bid, i.e. higher that 
-                    # current best
-                    if ibid[0] > self.lbid[0][0]:
-                        publish = True
+            # store last bid
+            self.last_bid = nb[-1][0]
 
-                    # add, sort descending and keep n
-                    aux = self.lbid +[ibid]
-                    self.lbid = sorted(aux, key=lambda x: x[0], reverse=True)[0:self.n]
+            # append, sort descending price and ascending volume
+            tmp = self.lbid +list(filter(lambda x:x[1]>0, nb))
+            # sort list price descending, volume ascending
+            tmp.sort(key=lambda x: (x[0], -x[1]), reverse=True)
+            # get a unique list of prices
+            pset = set([x[0] for x in tmp])
+            # and remove duplicate prices from tmp
+            self.lbid = []
+            for x in tmp:
+                if x[0] in pset:
+                    self.lbid.append(x)
+                    pset.remove(x[0])
+            # keep at most n
+            self.lbid=self.lbid[0:self.n]
+
+            # publish only if the best bid changed
+            if self.lbid[0] != old_top_bid:
+                publish = True
 
         if publish:
             await self.uq.put([xch, self.coin, self.market, self.lask,
