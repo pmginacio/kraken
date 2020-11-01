@@ -266,10 +266,12 @@ class Asset(object):
         self.lask = [[x for x in y[0:2]] for y in ba]
         self.lbid = [[x for x in y[0:2]] for y in bs]
 
-        self.last_ask = None
-        self.last_bid = None
+        # keep price level with latest timestamp
+        self.last_ask = max(ba,key=lambda x: float(x[2]))[0]
+        self.last_bid = max(bs,key=lambda x: float(x[2]))[0]
 
-        self.ts = None
+        # keep latest timestamp
+        self.ts = max(ba+bs,key=lambda x: float(x[2]))[2]
 
         # external price update queue
         self.uq = uq
@@ -298,53 +300,24 @@ class Asset(object):
         self.ts]        # timestamp
         '''
 
-        # *_before and *_after commented code was used for debug
-        # may be removed after validation
         if na is not None:
-
-            # lask_before=[x.copy() for x in self.lask]
-                       
+                     
             publish = self._update_book(na,'ask')
-
-            # lask_after=[x.copy() for x in self.lask]
                  
         if nb is not None:
 
-            # lbid_before=[x.copy() for x in self.lbid]
-
             publish = self._update_book(nb,'bid')
 
-            # lbid_after=[x.copy() for x in self.lbid]
-
         if cs is not None and not self._check(cs):
-
-            # print(self.coin,self.market)
-            # if na is not None:
-            #     logger.debug(' lask before:')
-            #     for x in lask_before:
-            #         print(x)
-            #     logger.debug(' na=',na)
-            #     logger.debug(' lask after:')
-            #     for x in lask_after:
-            #         print(x)
-
-            # if nb is not None:
-            #     logger.debug(' lbid before:')
-            #     for x in lbid_before:
-            #         print(x)
-            #     logger.debug(' nb=',nb)
-            #     logger.debug(' lbid after:')
-            #     for x in lbid_after:
-            #         print(x)
-            
+          
             # it's not a bad idea to resbuscribe when something goes wrong
             # i avoided doing that because it is important to get the book 
             # update algorithm working correctly
             raise ValueError('incorrect checksum')
 
         if publish:
-            await self.uq.put([xch, self.coin, self.market, self.lask,
-                self.lbid, self.last_ask, self.last_bid, self.ts])
+            await self.uq.put([xch, self.coin, self.market, self.last_bid, 
+                self.last_ask, self.lask, self.lbid, self.ts])
 
 
     def _check(self,cs):
@@ -428,24 +401,29 @@ class Asset(object):
                 if len(out) > self.n:
                     out.pop()
 
-                # publish if top ask/bid 
-                if idx == 0:
-                    publish = True
             else:
                 if float(v) == 0:
                     # delete price level
                     out.pop(idx)
 
-                    # publish if top price level was deleted
-                    if idx == 0:
-                        publish = True
                 else:
                     # update volume for existing price level
                     out[idx][1] = v
 
+            # publish when,
+            #   new top price level
+            #   deleted top price level
+            #   new volume for top price level
+            if idx == 0:
+                publish = True
+
             # keep last price level only if volume is not zero
             if float(v) != 0:
-                self.ts = t
+                # update timestamp if later then current one
+                # this happens when new bid and new ask come in one message
+                # and here we keep the latest timestamp of both of them
+                if float(t) > float(self.ts):
+                    self.ts = t
                 if mode == 'ask':
                     self.last_ask = p
                 else:
